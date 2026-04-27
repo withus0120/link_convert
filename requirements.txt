@@ -1,5 +1,5 @@
 Flask
-gunicorn
 flask-cors
 requests
+gunicorn
 google-api-python-client
