@@ -205,41 +205,78 @@ def video_to_channel_info(video_id: str):
     }
 
 
-def find_live_by_channel_id(channel_id: str):
+def find_live_by_handle(handle: str):
     """
-    search.list 사용함.
-    비용 100 units.
-    그래서 꼭 필요한 라이브 조회 때만 사용.
+    YouTube Data API search.list를 쓰지 않고,
+    https://www.youtube.com/@handle/streams HTML에서 라이브 여부를 확인한다.
+    비용: 0 YouTube API units
     """
-    youtube = get_youtube()
-
-    res = youtube.search().list(
-        part="snippet",
-        channelId=channel_id,
-        eventType="live",
-        type="video",
-        maxResults=1
-    ).execute()
-
-    items = res.get("items", [])
-    if not items:
-        return {
-            "is_live": False,
-            "live_url": None,
-            "live_video_id": None,
-            "live_title": None
-        }
-
-    item = items[0]
-    video_id = item.get("id", {}).get("videoId")
-    snippet = item.get("snippet", {})
-
-    return {
-        "is_live": True,
-        "live_url": f"https://www.youtube.com/watch?v={video_id}",
-        "live_video_id": video_id,
-        "live_title": snippet.get("title")
+    empty = {
+        "is_live": False,
+        "live_url": None,
+        "live_video_id": None,
+        "live_title": None
     }
+
+    if not handle:
+        return empty
+
+    handle = handle.strip()
+    if not handle.startswith("@"):
+        handle = "@" + handle
+
+    raw_handle = handle
+    encoded_handle = "@" + quote(handle[1:], safe="")
+
+    urls = [
+        f"https://www.youtube.com/{raw_handle}/streams",
+        f"https://www.youtube.com/{encoded_handle}/streams",
+    ]
+
+    for url in urls:
+        try:
+            html = fetch_html(url)
+
+            # 사용자가 요청한 라이브 뱃지 클래스 기준
+            live_badge_found = (
+                "ytSpecAvatarShapeLiveBadgeText" in html
+                or "ytSpecAvatarShapeLiveBadge" in html
+                or '"style":"LIVE"' in html
+                or '"text":"LIVE"' in html
+                or '"label":"LIVE"' in html
+            )
+
+            if not live_badge_found:
+                continue
+
+            video_id = None
+
+            # /streams 페이지의 첫 번째 videoId가 라이브일 가능성이 높음
+            video_matches = re.findall(r'"videoId":"([^"]+)"', html)
+            if video_matches:
+                # 중복 제거하면서 첫 번째 값 사용
+                seen = []
+                for v in video_matches:
+                    if v not in seen:
+                        seen.append(v)
+                video_id = seen[0] if seen else None
+
+            live_title = None
+            title_match = re.search(r'"title":\{"runs":\[\{"text":"([^"]+)"', html)
+            if title_match:
+                live_title = title_match.group(1)
+
+            return {
+                "is_live": True,
+                "live_url": f"https://www.youtube.com/watch?v={video_id}" if video_id else None,
+                "live_video_id": video_id,
+                "live_title": live_title
+            }
+
+        except Exception:
+            continue
+
+    return empty
 
 
 def resolve_to_channel_id(value: str):
@@ -334,7 +371,7 @@ def convert():
             })
 
             if mode in ["all", "live"]:
-                live_info = find_live_by_channel_id(video_info.get("channel_id"))
+                live_info = find_live_by_handle(video_info.get("handle"))
                 result.update(live_info)
                 if not live_info.get("is_live"):
                     result["message"] = "현재 방송 중인 라이브가 없습니다."
@@ -365,7 +402,7 @@ def convert():
         })
 
         if mode in ["all", "live"]:
-            live_info = find_live_by_channel_id(channel_id)
+            live_info = find_live_by_handle(result.get("handle"))
             result.update(live_info)
             if not live_info.get("is_live"):
                 result["message"] = "현재 방송 중인 라이브가 없습니다."
