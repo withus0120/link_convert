@@ -5,6 +5,7 @@ import os
 import re
 import requests
 from urllib.parse import urlparse, parse_qs
+from urllib.parse import quote
 
 app = Flask(__name__)
 CORS(app)
@@ -108,19 +109,36 @@ def fetch_html(url: str):
 
 def handle_to_channel_id(handle: str):
     handle = handle.strip()
+
     if not handle.startswith("@"):
         handle = "@" + handle
 
-    url = f"https://www.youtube.com/{handle}"
-    html = fetch_html(url)
+    raw_handle = handle
+    encoded_handle = "@" + quote(handle[1:], safe="")
 
-    match = re.search(r'"channelId":"(UC[\w-]+)"', html)
-    if match:
-        return match.group(1)
+    urls = [
+        f"https://www.youtube.com/{raw_handle}",
+        f"https://www.youtube.com/{encoded_handle}",
+    ]
 
-    match = re.search(r'<meta itemprop="channelId" content="(UC[\w-]+)">', html)
-    if match:
-        return match.group(1)
+    for url in urls:
+        try:
+            html = fetch_html(url)
+
+            patterns = [
+                r'"channelId":"(UC[\w-]+)"',
+                r'"externalId":"(UC[\w-]+)"',
+                r'<meta itemprop="channelId" content="(UC[\w-]+)">',
+                r'"browseId":"(UC[\w-]+)"'
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, html)
+                if match:
+                    return match.group(1)
+
+        except Exception:
+            continue
 
     return None
 
